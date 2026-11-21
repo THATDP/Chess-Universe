@@ -14,7 +14,7 @@
     "lucide-react": "^1.77.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
-    "stockfish": "^19.0.1",
+    "stockfish.js": "^10.0.2",
     "tailwind-merge": "3.4.0"
   },
   "devDependencies": {
