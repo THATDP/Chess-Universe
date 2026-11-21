@@ -1,107 +1,186 @@
-import { useEffect, useState } from "react";
-import { BarChart3, BookOpen, FlaskConical, GraduationCap, Home, Microscope, Settings as Cog, Swords, Trophy } from "lucide-react";
-import { NavCtx, type NavParams, type Screen } from "./components/ui";
-import { getEngine } from "./lib/engine";
-import { play, setVolumes, unlockAudio } from "./lib/sound";
-import { useSettings } from "./lib/store";
-import Menu from "./screens/Menu";
-import PlayScreen from "./screens/PlayScreen";
-import LabScreen from "./screens/LabScreen";
-import OpeningsScreen from "./screens/OpeningsScreen";
-import TrainingScreen from "./screens/TrainingScreen";
-import AnalysisScreen from "./screens/AnalysisScreen";
-import StatsScreen from "./screens/StatsScreen";
-import SettingsScreen from "./screens/SettingsScreen";
+import { Component, useCallback, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
+import { SettingsProvider, useSettings } from "./core/settings/settings";
+import { NavContext } from "./core/nav";
+import type { NavParams, Page } from "./core/nav";
+import { audio } from "./core/audio/audio";
+import { getEngine } from "./core/engine/stockfish";
+import { EngineBadge } from "./ui/EnginePanel";
+import Home from "./features/Home";
+import Play from "./features/Play";
+import TheoryLab from "./features/lab/TheoryLab";
+import Puzzles from "./features/Puzzles";
+import Endgames from "./features/Endgames";
+import Analysis from "./features/Analysis";
+import Editor from "./features/Editor";
+import Profile from "./features/Profile";
+import Settings from "./features/Settings";
+import { cn } from "./utils/cn";
 
-const NAV: { id: Screen; label: string; icon: typeof Home }[] = [
-  { id: "menu", label: "Início", icon: Home },
-  { id: "play", label: "Jogar", icon: Swords },
-  { id: "lab", label: "Laboratório", icon: FlaskConical },
-  { id: "openings", label: "Aberturas", icon: BookOpen },
-  { id: "training", label: "Treino", icon: GraduationCap },
-  { id: "analysis", label: "Análise", icon: Microscope },
-  { id: "stats", label: "Perfil", icon: Trophy },
-  { id: "settings", label: "Ajustes", icon: Cog },
+const NAV: { page: Page; icon: string; label: string }[] = [
+  { page: "home", icon: "⌂", label: "Início" },
+  { page: "play", icon: "♟", label: "Jogar" },
+  { page: "lab", icon: "⚔", label: "Gambitos" },
+  { page: "openings", icon: "❏", label: "Aberturas" },
+  { page: "puzzles", icon: "✦", label: "Táticas" },
+  { page: "endgames", icon: "⚑", label: "Finais" },
+  { page: "analysis", icon: "◎", label: "Análise" },
+  { page: "editor", icon: "✎", label: "Editor" },
+  { page: "profile", icon: "☰", label: "Perfil" },
+  { page: "settings", icon: "⚙", label: "Ajustes" },
 ];
 
-export default function App() {
-  const [screen, setScreen] = useState<Screen>("menu");
-  const [params, setParams] = useState<NavParams>({});
-  const [nonce, setNonce] = useState(0);
-  const [engine, setEngine] = useState<"loading" | "ready" | "error">("loading");
-  const s = useSettings();
+class Boundary extends Component<{ children: ReactNode; reset: () => void }, { err: Error | null }> {
+  state = { err: null as Error | null };
+  static getDerivedStateFromError(err: Error) {
+    return { err };
+  }
+  render() {
+    if (this.state.err)
+      return (
+        <div className="mx-auto max-w-lg rounded-xl border border-red-500/40 bg-red-500/10 p-6 text-center">
+          <div className="text-lg font-bold text-red-200">Algo deu errado nesta tela</div>
+          <p className="mt-2 text-sm text-mute">{this.state.err.message}</p>
+          <button className="mt-4 rounded-lg bg-accent px-4 py-2 font-bold text-accent-ink" onClick={() => { this.setState({ err: null }); this.props.reset(); }}>
+            Voltar ao início
+          </button>
+        </div>
+      );
+    return this.props.children;
+  }
+}
 
-  const go = (sc: Screen, p: NavParams = {}) => {
-    play("transition");
-    setParams(p);
-    setScreen(sc);
-    setNonce((n) => n + 1);
+function Shell() {
+  const [page, setPage] = useState<Page>(() => (localStorage.getItem("chessuniverse:v1:page") as Page) || "home");
+  const [params, setParams] = useState<NavParams>({});
+  const [menu, setMenu] = useState(false);
+  const { settings, update } = useSettings();
+
+  const go = useCallback((p: Page, pr: NavParams = {}) => {
+    setParams(pr);
+    setPage(p);
+    setMenu(false);
+    localStorage.setItem("chessuniverse:v1:page", p);
     window.scrollTo({ top: 0 });
-  };
+  }, []);
 
   useEffect(() => {
-    const e = getEngine("play");
-    getEngine("analysis");
-    getEngine("live");
-    const t = setInterval(() => {
-      if (e.failed) setEngine("error");
-      else if (e.isReady) setEngine("ready");
-    }, 400);
-    const unlock = () => unlockAudio();
-    window.addEventListener("pointerdown", unlock, { once: true });
-    return () => clearInterval(t);
+    // pré-carrega o Stockfish em segundo plano para a primeira jogada ser instantânea
+    const t = window.setTimeout(() => void getEngine("play").init().catch(() => undefined), 1200);
+    return () => window.clearTimeout(t);
   }, []);
-  useEffect(() => setVolumes(s.sfx, s.music, s.muted), [s.sfx, s.music, s.muted]);
 
-  const Active = { menu: Menu, play: PlayScreen, lab: LabScreen, openings: OpeningsScreen, training: TrainingScreen, analysis: AnalysisScreen, stats: StatsScreen, settings: SettingsScreen }[screen];
+  useEffect(() => {
+    document.title = "Chess Universe — Xadrez com Stockfish, Gambitos e Análise";
+  }, []);
+
+  const ctx = useMemo(() => ({ page, params, go }), [page, params, go]);
+  // chave muda quando params mudam para remontar a tela com novos dados
+  const pageKey = page + JSON.stringify(Object.keys(params)) + (params.theoryId ?? "") + (params.fen ?? "") + (params.customFen ?? "") + (params.game ? "g" + params.game.moves.length + params.game.startFen : "");
+
+  let view: ReactNode;
+  switch (page) {
+    case "play":
+      view = <Play key={pageKey} />;
+      break;
+    case "lab":
+      view = <TheoryLab key={pageKey} kind="gambit" />;
+      break;
+    case "openings":
+      view = <TheoryLab key={pageKey} kind="opening" />;
+      break;
+    case "puzzles":
+      view = <Puzzles />;
+      break;
+    case "endgames":
+      view = <Endgames />;
+      break;
+    case "analysis":
+      view = <Analysis key={pageKey} />;
+      break;
+    case "editor":
+      view = <Editor />;
+      break;
+    case "profile":
+      view = <Profile />;
+      break;
+    case "settings":
+      view = <Settings />;
+      break;
+    default:
+      view = <Home />;
+  }
+
+  const side = (
+    <nav className="flex h-full flex-col">
+      <button onClick={() => go("home")} className="mb-6 flex items-center gap-3 px-2 text-left">
+        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent text-2xl text-accent-ink shadow-lg shadow-black/40">♞</span>
+        <span className="leading-tight">
+          <span className="block text-sm font-black tracking-widest text-ink">CHESS</span>
+          <span className="block text-sm font-black tracking-widest text-accent">UNIVERSE</span>
+        </span>
+      </button>
+      <div className="space-y-1">
+        {NAV.map((n) => (
+          <button
+            key={n.page}
+            onClick={() => { audio.play("click"); go(n.page); }}
+            className={cn("flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition", page === n.page ? "bg-accent text-accent-ink shadow-md" : "text-mute hover:bg-panel2 hover:text-ink")}
+          >
+            <span className="w-5 text-center">{n.icon}</span>
+            {n.label}
+          </button>
+        ))}
+      </div>
+      <div className="mt-auto space-y-3 pt-6">
+        <button
+          onClick={() => update({ muted: !settings.muted })}
+          className="flex w-full items-center justify-between rounded-lg border border-line bg-panel px-3 py-2 text-xs text-mute hover:text-ink"
+        >
+          <span>{settings.muted ? "✕ Som desligado" : "♪ Som ligado"}</span>
+          <span className="text-[10px]">clique p/ {settings.muted ? "ativar" : "silenciar"}</span>
+        </button>
+        <button
+          onClick={() => update({ musicOn: !settings.musicOn, muted: false })}
+          className="flex w-full items-center justify-between rounded-lg border border-line bg-panel px-3 py-2 text-xs text-mute hover:text-ink"
+        >
+          <span>♫ Música ambiente</span>
+          <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-bold", settings.musicOn ? "bg-accent text-accent-ink" : "bg-panel2")}>{settings.musicOn ? "ON" : "OFF"}</span>
+        </button>
+        <div className="px-1"><EngineBadge /></div>
+      </div>
+    </nav>
+  );
 
   return (
-    <NavCtx.Provider value={{ go, params }}>
-      <div className="min-h-full flex flex-col md:flex-row">
-        <aside className="hidden md:flex w-[76px] lg:w-56 shrink-0 flex-col border-r border-white/5 bg-black/30 backdrop-blur-xl sticky top-0 h-screen">
-          <button onClick={() => go("menu")} className="flex items-center gap-2 px-4 py-5 text-left">
-            <span className="text-3xl leading-none">♞</span>
-            <span className="hidden lg:block leading-tight">
-              <span className="block text-[15px] font-extrabold tracking-wide bg-gradient-to-r from-amber-200 to-emerald-300 bg-clip-text text-transparent">CHESS UNIVERSE</span>
-              <span className="block text-[10px] text-zinc-500">Plataforma de xadrez</span>
-            </span>
-          </button>
-          <nav className="flex-1 px-2 space-y-1">
-            {NAV.map((n) => (
-              <button key={n.id} onClick={() => go(n.id)} className={`w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${screen === n.id ? "bg-white/10 text-white" : "text-zinc-400 hover:text-white hover:bg-white/5"}`}>
-                <n.icon size={18} />
-                <span className="hidden lg:block">{n.label}</span>
-              </button>
-            ))}
-          </nav>
-          <div className="p-3 text-[11px] text-zinc-500 hidden lg:block">
-            <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${engine === "ready" ? "bg-emerald-400" : engine === "error" ? "bg-rose-500" : "bg-amber-400 animate-pulse"}`} />
-              {engine === "ready" ? "Stockfish 19 (WASM) pronto" : engine === "error" ? "Erro ao carregar o motor" : "Carregando Stockfish…"}
-            </div>
+    <NavContext.Provider value={ctx}>
+      <div className="flex min-h-full">
+        <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 border-r border-line bg-bg/80 p-4 backdrop-blur lg:block">{side}</aside>
+        {menu && (
+          <div className="fixed inset-0 z-50 lg:hidden" onClick={() => setMenu(false)}>
+            <div className="absolute inset-0 bg-black/60" />
+            <aside className="absolute left-0 top-0 h-full w-64 border-r border-line bg-bg p-4" onClick={(e) => e.stopPropagation()}>{side}</aside>
           </div>
-        </aside>
-        <main key={nonce} className="screen-enter flex-1 min-w-0 p-3 sm:p-5 pb-24 md:pb-6">
-          <Active />
-        </main>
-        <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 flex justify-around bg-black/80 backdrop-blur-xl border-t border-white/10 py-1.5">
-          {NAV.filter((n) => ["menu", "play", "lab", "training", "stats"].includes(n.id)).map((n) => (
-            <button key={n.id} onClick={() => go(n.id)} className={`flex flex-col items-center text-[10px] px-3 py-1 rounded-lg ${screen === n.id ? "text-emerald-300" : "text-zinc-400"}`}>
-              <n.icon size={20} />
-              {n.label}
-            </button>
-          ))}
-          <button onClick={() => go("openings")} className={`flex flex-col items-center text-[10px] px-3 py-1 ${screen === "openings" ? "text-emerald-300" : "text-zinc-400"}`}>
-            <BookOpen size={20} />
-            Aberturas
-          </button>
-          <button onClick={() => go("settings")} className={`flex flex-col items-center text-[10px] px-3 py-1 ${screen === "settings" ? "text-emerald-300" : "text-zinc-400"}`}>
-            <Cog size={20} />
-            Ajustes
-          </button>
-        </nav>
-        <BarChart3 className="hidden" />
+        )}
+        <div className="min-w-0 flex-1">
+          <header className="sticky top-0 z-40 flex items-center justify-between border-b border-line bg-bg/90 px-4 py-2.5 backdrop-blur lg:hidden">
+            <button onClick={() => setMenu(true)} className="rounded-lg border border-line bg-panel px-3 py-1.5 text-lg" aria-label="Menu">☰</button>
+            <span className="text-sm font-black tracking-widest text-ink">CHESS <span className="text-accent">UNIVERSE</span></span>
+            <button onClick={() => update({ muted: !settings.muted })} className="rounded-lg border border-line bg-panel px-3 py-1.5" aria-label="Som">{settings.muted ? "✕" : "♪"}</button>
+          </header>
+          <main className="mx-auto w-full max-w-[1500px] p-4 md:p-6">
+            <Boundary reset={() => go("home")} key={pageKey}>{view}</Boundary>
+          </main>
+        </div>
       </div>
-    </NavCtx.Provider>
+    </NavContext.Provider>
+  );
+}
+
+export default function App() {
+  return (
+    <SettingsProvider>
+      <Shell />
+    </SettingsProvider>
   );
 }

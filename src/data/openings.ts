@@ -1,76 +1,231 @@
-import { Chess } from "chess.js";
-import { GAMBITOS_BRANCAS } from "./gambitsBrancas";
-import { GAMBITOS_PRETAS } from "./gambitsPretas";
-import { OUTRAS } from "./outras";
-import type { Opening } from "./types";
-export * from "./types";
+import { n } from "./theoryTypes";
+import type { TheorySource } from "./theoryTypes";
 
-export const OPENINGS: Opening[] = [...GAMBITOS_BRANCAS, ...GAMBITOS_PRETAS, ...OUTRAS];
-export const getOpening = (id: string) => OPENINGS.find((o) => o.id === id);
-export const splitLine = (m: string) => m.trim().split(/\s+/).filter(Boolean);
-
-/** Nome da abertura reconhecida para uma sequência de SAN (maior prefixo). */
-const index = new Map<string, { name: string; len: number; id: string }>();
-function norm(fen: string) {
-  return fen.split(" ").slice(0, 4).join(" ");
-}
-function build() {
-  for (const o of OPENINGS) {
-    const lines: [string, string][] = [[o.nome, o.moves], ...o.variantes.map((v) => [`${o.nome}: ${v.nome}`, v.moves] as [string, string])];
-    for (const [name, line] of lines) {
-      const c = new Chess();
-      const sans = splitLine(line);
-      for (let i = 0; i < sans.length; i++) {
-        try {
-          c.move(sans[i]);
-        } catch {
-          break;
-        }
-        const key = norm(c.fen());
-        const ex = index.get(key);
-        if (!ex || (name === o.nome && ex.len < i + 1)) index.set(key, { name, len: i + 1, id: o.id });
-      }
-    }
-  }
-}
-build();
-
-/** Está a posição na base de teoria? */
-export function bookLookup(fen: string): { name: string; id: string } | null {
-  const h = index.get(norm(fen));
-  return h ? { name: h.name, id: h.id } : null;
-}
-
-/** Variantes compatíveis com o prefixo de lances jogados (para trocar de defesa). */
-export function matchingVariants(o: Opening, played: string[]) {
-  return o.variantes.filter((v) => {
-    const l = splitLine(v.moves);
-    if (l.length < played.length) return false;
-    return played.every((m, i) => l[i] === m);
-  });
-}
-
-export interface TreeNode {
-  san: string;
-  ply: number;
-  children: TreeNode[];
-  names: string[];
-}
-/** Árvore de variantes (trie) a partir de todas as linhas da abertura. */
-export function buildTree(o: Opening): TreeNode {
-  const root: TreeNode = { san: "", ply: 0, children: [], names: [] };
-  const lines: [string, string][] = [[o.nome + " (principal)", o.moves], ...o.variantes.map((v) => [v.nome, v.moves] as [string, string])];
-  for (const [name, line] of lines) {
-    let node = root;
-    splitLine(line).forEach((san, i) => {
-      let ch = node.children.find((c) => c.san === san);
-      if (!ch) {
-        ch = { san, ply: i + 1, children: [], names: [] };
-        node.children.push(ch);
-      }
-      if (!ch.names.includes(name)) ch.names.push(name);
-      node = ch;
-    });
-  }
-  return root;
-}
+// Estudo de aberturas. Títulos em notação portuguesa; lances em SAN internacional.
+export const OPENINGS: TheorySource[] = [
+  {
+    id: "italiana",
+    name: "Partida Italiana",
+    side: "w",
+    eco: "C50–C54",
+    level: 1,
+    summary: "Desenvolvimento clássico mirando f7 com o bispo em c4. Ideal para aprender princípios: centro, desenvolvimento e segurança do rei.",
+    ideas: ["Desenvolver rápido e rocar.", "Preparar c3 e d4 para ocupar o centro.", "Cuidado com a pressão sobre f7."],
+    traps: ["Fegatello (Fried Liver): sacrifício Cxf7 após ...Cxd5."],
+    base: "e4 e5 Nf3 Nc6 Bc4",
+    tree: [
+      n("Giuoco Piano 3...Bc5", "Bc5", "Posição simétrica e clássica.", [
+        n("4.c3 Cf6 5.d4 exd4 6.cxd4 Bb4+", "c3 Nf6 d4 exd4 cxd4 Bb4+", "Ataque central: as brancas ganham espaço e as pretas contra-atacam com xeque.", undefined, "main"),
+        n("4.d3 Cf6 5.O-O d6 6.c3 a6 — Giuoco Pianissimo", "d3 Nf6 O-O d6 c3 a6", "Plano lento e estratégico, muito usado no alto nível.", undefined, "alt"),
+        n("4.b4 — Gambito Evans", "b4 Bxb4 c3 Ba5 d4", "Ver o Laboratório de Gambitos.", undefined, "alt"),
+      ], "main"),
+      n("Defesa dos Dois Cavalos 3...Cf6", "Nf6", "As pretas contra-atacam o peão e4.", [
+        n("4.Cg5 d5 5.exd5 Ca5 6.Bb5+ c6 7.dxc6 bxc6 8.Be2 h6 9.Cf3 e4", "Ng5 d5 exd5 Na5 Bb5+ c6 dxc6 bxc6 Be2 h6 Nf3 e4", "Linha principal da defesa Polerio.", undefined, "main"),
+        n("4.Cg5 d5 5.exd5 Cxd5 6.Cxf7 — Fegatello", "Ng5 d5 exd5 Nxd5 Nxf7 Kxf7 Qf3+ Ke6 Nc3 Nb4 O-O c6 d4", "O Fried Liver: ataque ao rei preto, mas as pretas têm defesas precisas.", undefined, "trap"),
+      ], "defense"),
+    ],
+  },
+  {
+    id: "ruy-lopez",
+    name: "Ruy López (Espanhola)",
+    side: "w",
+    eco: "C60–C99",
+    level: 2,
+    summary: "A abertura mais estudada da história: pressão sobre o cavalo c6 e o peão e5 com jogo estratégico profundo.",
+    ideas: ["Pressão sobre e5 através do cavalo c6.", "Plano com c3 e d4.", "Formações com h3 e Nbd2 no setup Breyer."],
+    base: "e4 e5 Nf3 Nc6 Bb5",
+    tree: [
+      n("3...a6 — Variante Morphy", "a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3", "A linha mais jogada.", [
+        n("7...d6 8.c3 O-O 9.h3 Cb8 10.d4 Cbd7 — Breyer", "d6 c3 O-O h3 Nb8 d4 Nbd7", "Setup de rearranjo de peças: o cavalo vai para d7 via b8.", undefined, "main"),
+        n("7...O-O — Marshall (ver gambitos)", "O-O c3 d5", "As pretas arriscam o gambito Marshall.", undefined, "alt"),
+      ], "main"),
+      n("3...Cf6 — Defesa Berlim", "Nf6 O-O Nxe4 d4 Nd6 Bxc6 dxc6 dxe5 Nf5 Qxd8+ Kxd8", "A famosa 'muralha de Berlim': final sólido e quase simétrico.", undefined, "defense"),
+      n("3...Bc5 — Defesa Clássica", "Bc5 c3 Nf6 O-O O-O d4 Bb6", "Alternativa mais direta.", undefined, "alt"),
+    ],
+  },
+  {
+    id: "escocesa",
+    name: "Partida Escocesa",
+    side: "w",
+    eco: "C44–C45",
+    level: 1,
+    summary: "Abertura direta: as brancas abrem o centro imediatamente com 3.d4, buscando espaço e atividade.",
+    ideas: ["Abrir o centro rapidamente.", "Desenvolvimento ativo de peças.", "Transições para o Escocês de Mieses ou Clássico."],
+    base: "e4 e5 Nf3 Nc6 d4",
+    tree: [
+      n("3...exd4 4.Cxd4", "exd4 Nxd4", "As brancas recapturam com o cavalo.", [
+        n("4...Cf6 5.Cxc6 bxc6 6.e5 De7 7.De2 Cd5 8.c4 — Mieses", "Nf6 Nxc6 bxc6 e5 Qe7 Qe2 Nd5 c4", "A variante Mieses: jogo agudo e teórico.", undefined, "main"),
+        n("4...Bc5 5.Be3 Df6 6.c3 Nge7 7.Bc4 — Clássica", "Bc5 Be3 Qf6 c3 Nge7 Bc4", "Linha clássica com desenvolvimento harmonioso.", undefined, "alt"),
+      ], "main"),
+    ],
+  },
+  {
+    id: "inglesa",
+    name: "Abertura Inglesa",
+    side: "w",
+    eco: "A10–A39",
+    level: 2,
+    summary: "Flexível e estratégica: as brancas controlam d5 do flanco e escolhem a estrutura depois de ver a resposta das pretas.",
+    ideas: ["Controlar d5 com c4.", "Fianqueto do bispo em g2.", "Transposições para sistemas de d4 e Siciliana invertida."],
+    base: "c4",
+    tree: [
+      n("1...e5 — Siciliana invertida", "e5 Nc3 Nf6 Nf3 Nc6 g3 d5 cxd5 Nxd5 Bg2 Nb6 O-O Be7", "Posição estratégica com bispo em g2 pressionando o centro.", undefined, "main"),
+      n("1...c5 — Simétrica", "c5 Nf3 Nf6 Nc3 Nc6 g3 g6 Bg2 Bg7", "As pretas espelham o plano.", undefined, "alt"),
+      n("1...e6 — Transposição", "e6 Nc3 d5 d4 Nf6 Nf3 Be7 Bg5 O-O e3 Nbd7", "Frequente transposição para o Gambito da Dama Recusado.", undefined, "alt"),
+    ],
+  },
+  {
+    id: "londres",
+    name: "Sistema de Londres",
+    side: "w",
+    eco: "D02",
+    level: 1,
+    summary: "Sistema fácil de aprender: Bf4 antes de e3 e uma estrutura sólida com poucos ajustes teóricos.",
+    ideas: ["Desenvolver o bispo antes de fechar com e3.", "Plano com c3 e Nbd2.", "Evitar longas variantes teóricas."],
+    base: "d4 d5 Nf3 Nf6 Bf4",
+    tree: [
+      n("3...e6 4.e3 c5 5.c3 Cc6 6.Cbd2 Bd6 7.Bg3 O-O 8.Bd3 b6", "e6 e3 c5 c3 Nc6 Nbd2 Bd6 Bg3 O-O Bd3 b6", "Sistema típico: as brancas trocam bispos e jogam no centro.", undefined, "main"),
+      n("3...c5 4.e3 Cc6 5.c3 Db6 6.Db3 c4 7.Dxb6 axb6 8.Cbd2 Bf5", "c5 e3 Nc6 c3 Qb6 Qb3 c4 Qxb6 axb6 Nbd2 Bf5", "Linha de troca de damas: final confortável para as brancas.", undefined, "alt"),
+      n("3...g6 4.e3 Bg7 5.Cbd2 O-O 6.Be2 b6", "g6 e3 Bg7 Nbd2 O-O Be2 b6", "As pretas montam fianqueto.", undefined, "alt"),
+    ],
+  },
+  {
+    id: "catala",
+    name: "Abertura Catalã",
+    side: "w",
+    eco: "E01–E09",
+    level: 3,
+    summary: "Combina ideias do Gambito da Dama com fianqueto: pressão contínua sobre a diagonal longa e o centro das pretas.",
+    ideas: ["Bispo em g2 pressiona d5 e b7.", "Recuperar o peão c4 se aceitar.", "Jogo posicional de longo prazo."],
+    base: "d4 Nf6 c4 e6 g3",
+    tree: [
+      n("4...d5 5.Bg2 Be7 6.Cf3 O-O 7.O-O c6", "d5 Bg2 Be7 Nf3 O-O O-O c6", "Catalã fechada: sólida e posicional.", [n("8.Dc2 Cbd7 9.Cbd2 b6", "Qc2 Nbd7 Nbd2 b6", "As pretas se preparam para ...Bb7.", undefined, "main")], "main"),
+      n("4...d5 5.Bg2 dxc4 6.Cf3 a6 7.O-O Cc6", "d5 Bg2 dxc4 Nf3 a6 O-O Nc6", "Catalã aberta: as brancas recuperam o peão com pressão.", undefined, "alt"),
+      n("4...Bb4+ 5.Bd2 Be7", "Bb4+ Bd2 Be7", "Variante com xeque antecipado.", undefined, "alt"),
+    ],
+  },
+  {
+    id: "najdorf",
+    name: "Siciliana Najdorf",
+    side: "b",
+    eco: "B90–B99",
+    level: 3,
+    summary: "A defesa preferida de Fischer e Kasparov: ...a6 evita Cb5 e prepara ...e5 ou ...b5 com jogo dinâmico e de contra-ataque.",
+    ideas: ["Controlar b5 com ...a6.", "Preparar ...e5 ou ...e6 e ...b5.", "Contra-ataque no flanco da dama."],
+    base: "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6",
+    tree: [
+      n("6.Bg5 — Ataque principal", "Bg5 e6 f4 Be7 Qf3 Qc7 O-O-O Nbd7", "Linha agressiva: as brancas atacam rápido.", undefined, "main"),
+      n("6.Be3 — Ataque inglês", "Be3 e5 Nb3 Be6 f3 Be7 Qd2 O-O O-O-O Nbd7", "As brancas jogam no flanco do rei com g4 e h4.", undefined, "alt"),
+      n("6.Be2 — Variante clássica", "Be2 e5 Nb3 Be7 O-O O-O Be3 Be6", "Estratégia posicional.", undefined, "alt"),
+      n("6.Bc4 — Ataque Fischer-Sozin", "Bc4 e6 Bb3 b5 O-O Be7 Qf3 Qb6 Be3", "Aguda: as brancas visam f7.", undefined, "alt"),
+    ],
+  },
+  {
+    id: "francesa",
+    name: "Defesa Francesa",
+    side: "b",
+    eco: "C00–C19",
+    level: 2,
+    summary: "Estrutura sólida com contra-ataque no centro: as pretas aceitam o espaço branco em troca de uma posição firme e de jogo contra d4.",
+    ideas: ["Atacar d4 com ...c5.", "Bispo de casas brancas problemático.", "Contra-ataque no flanco da dama."],
+    base: "e4 e6 d4 d5",
+    tree: [
+      n("3.Cc3 Cf6 4.Bg5 Be7 — Clássica", "Nc3 Nf6 Bg5 Be7 e5 Nfd7 Bxe7 Qxe7 f4 O-O Nf3 c5", "Estrutura clássica: ataque contra d4.", undefined, "main"),
+      n("3.Cc3 Bb4 — Winawer", "Nc3 Bb4 e5 c5 a3 Bxc3+ bxc3 Ne7 Qg4 O-O Bd3 Nbc6", "Luta aguda: as brancas têm o par de bispos, as pretas pressionam o centro.", undefined, "alt"),
+      n("3.Cd2 — Tarrasch", "Nd2 Nf6 e5 Nfd7 Bd3 c5 c3 Nc6 Ne2 cxd4 cxd4 f6", "Evita o cravado em c3.", undefined, "alt"),
+      n("3.exd5 — Troca", "exd5 exd5 Nf3 Nf6 Bd3 Bd6 O-O O-O", "Posição simétrica e calma.", undefined, "alt"),
+      n("3.e5 — Avanço", "e5 c5 c3 Nc6 Nf3 Qb6 a3 c4", "As brancas ganham espaço; as pretas atacam d4.", undefined, "alt"),
+    ],
+  },
+  {
+    id: "caro-kann",
+    name: "Defesa Caro-Kann",
+    side: "b",
+    eco: "B10–B19",
+    level: 1,
+    summary: "Uma defesa sólida e resistente: as pretas constroem uma estrutura segura e libertam o bispo de casas brancas antes de ...e6.",
+    ideas: ["Desenvolver o bispo c8 antes de ...e6.", "Estrutura sólida com ...c6 e ...d5.", "Contra-ataque com ...c5 em algumas linhas."],
+    base: "e4 c6 d4 d5",
+    tree: [
+      n("3.Cc3 dxe4 4.Cxe4 Bf5 — Clássica", "Nc3 dxe4 Nxe4 Bf5 Ng3 Bg6 h4 h6 Nf3 Nd7 h5 Bh7 Bd3 Bxd3 Qxd3 e6", "Linha principal: peças pretas sólidas.", undefined, "main"),
+      n("3.e5 — Avanço", "e5 Bf5 Nf3 e6 Be2 c5 Be3 Nd7", "As brancas ganham espaço; as pretas contra-atacam.", undefined, "alt"),
+      n("3.exd5 — Troca", "exd5 cxd5 Bd3 Nc6 c3 Nf6 Bf4 g6", "Posição equilibrada com ataque da minoria.", undefined, "alt"),
+      n("3.Cd2 — Karpov", "Nd2 dxe4 Nxe4 Nd7 Ng5 Ngf6 Bd3 e6 N1f3 Bd6", "Linha de Karpov, sólida e popular.", undefined, "alt"),
+    ],
+  },
+  {
+    id: "india-rei",
+    name: "Índia do Rei",
+    side: "b",
+    eco: "E60–E99",
+    level: 3,
+    summary: "Defesa hipermoderna: as pretas deixam as brancas construírem um grande centro e depois o atacam com ...e5 e ...c5.",
+    ideas: ["Fianqueto do bispo em g7.", "Contra-ataque com ...e5 ou ...c5.", "Ataque com ...f5 no flanco do rei."],
+    base: "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6",
+    tree: [
+      n("5.Cf3 O-O 6.Be2 e5 — Clássica / Mar del Plata", "Nf3 O-O Be2 e5 O-O Nc6 d5 Ne7 Ne1 Nd7 Be3 f5", "As brancas atacam no flanco da dama; as pretas, no do rei.", undefined, "main"),
+      n("5.f3 — Sämisch", "f3 O-O Be3 e5 d5 Nh5 Qd2 f5", "Estrutura sólida e posição agressiva.", undefined, "alt"),
+    ],
+  },
+  {
+    id: "nimzo",
+    name: "Defesa Nimzo-Índia",
+    side: "b",
+    eco: "E20–E59",
+    level: 3,
+    summary: "Posicional e flexível: as pretas cravam o cavalo c3 e controlam e4, pressionando o centro branco.",
+    ideas: ["Cravar o cavalo c3.", "Trocar bispo por cavalo para estragar peões.", "Controlar e4."],
+    base: "d4 Nf6 c4 e6 Nc3 Bb4",
+    tree: [
+      n("4.e3 — Rubinstein", "e3 O-O Bd3 d5 Nf3 c5 O-O Nc6 a3 Bxc3 bxc3 dxc4 Bxc4 Qc7", "A linha mais sólida das brancas.", undefined, "main"),
+      n("4.Dc2 — Clássica", "Qc2 O-O a3 Bxc3+ Qxc3 b6 Bg5 Bb7 e3 d6 f3 Nbd7", "As brancas evitam peões dobrados.", undefined, "alt"),
+      n("4.a3 — Sämisch", "a3 Bxc3+ bxc3 c5 e3 b6 Bd3 Bb7 f3 Nc6 Ne2 Na5", "As brancas aceitam os peões dobrados em troca do par de bispos.", undefined, "alt"),
+    ],
+  },
+  {
+    id: "escandinava",
+    name: "Defesa Escandinava",
+    side: "b",
+    eco: "B01",
+    level: 1,
+    summary: "Direta e simples: as pretas desafiam e4 imediatamente e recuperam o peão com a dama, em troca de tempo perdido.",
+    ideas: ["Recapturar o peão com a dama.", "Desenvolver peças com tempo.", "Estrutura sólida e conhecida."],
+    base: "e4 d5 exd5 Qxd5",
+    tree: [
+      n("3.Cc3 Da5 4.d4 Cf6 5.Cf3 c6 6.Bc4 Bf5 7.Bd2 e6", "Nc3 Qa5 d4 Nf6 Nf3 c6 Bc4 Bf5 Bd2 e6", "A dama em a5 é a linha clássica.", undefined, "main"),
+      n("3.Cc3 Dd6 4.d4 Cf6 5.Cf3 a6 6.g3 Cc6", "Nc3 Qd6 d4 Nf6 Nf3 a6 g3 Nc6", "Variante moderna, dama em d6.", undefined, "alt"),
+      n("3.Cf3 Cf6 4.d4 Bg4 5.Be2 e6 6.O-O Cc6 7.h3 Bh5", "Nf3 Nf6 d4 Bg4 Be2 e6 O-O Nc6 h3 Bh5", "As brancas escolhem a linha de desenvolvimento.", undefined, "alt"),
+    ],
+  },
+  {
+    id: "petrov",
+    name: "Defesa Petrov (Russa)",
+    side: "b",
+    eco: "C42–C43",
+    level: 1,
+    summary: "Imitar o ataque das brancas: as pretas contra-atacam e4 em vez de defender e5, buscando simetria e solidez.",
+    ideas: ["Contra-ataque em e4.", "Solidez simétrica.", "Evitar a pressa ao capturar em e4."],
+    traps: ["Se as pretas jogam 3...Cxe4? 4.De2 Cf6?? 5.Cc6+ ganha a dama."],
+    base: "e4 e5 Nf3 Nf6",
+    tree: [
+      n("3.Cxe5 d6 4.Cf3 Cxe4 5.d4 d5 6.Bd3 Be7 7.O-O Cc6 8.Te1 Bg4", "Nxe5 d6 Nf3 Nxe4 d4 d5 Bd3 Be7 O-O Nc6 Re1 Bg4", "Linha principal da Petrov.", undefined, "main"),
+      n("3.d4 Cxe4 4.Bd3 d5 5.Cxe5 Cd7 6.Cxd7 Bxd7 7.O-O Bd6", "d4 Nxe4 Bd3 d5 Nxe5 Nd7 Nxd7 Bxd7 O-O Bd6", "Ataque Steinitz.", undefined, "alt"),
+      n("3.Cxe5 Cxe4?? — Armadilha", "Nxe5 Nxe4 Qe2 Nf6 Nc6+", "A dama preta cai por garfo descoberto.", undefined, "trap"),
+    ],
+  },
+  {
+    id: "grunfeld",
+    name: "Defesa Grünfeld",
+    side: "b",
+    eco: "D70–D99",
+    level: 3,
+    summary: "Dinâmica e hipermoderna: as pretas deixam as brancas construírem um grande centro e depois o atacam com peças e peões.",
+    ideas: ["Atacar o centro com ...c5 e ...Cxc3.", "Bispo g7 pressionando d4.", "Pressão no flanco da dama."],
+    base: "d4 Nf6 c4 g6 Nc3 d5",
+    tree: [
+      n("4.cxd5 Cxd5 5.e4 Cxc3 6.bxc3 Bg7 — Troca", "cxd5 Nxd5 e4 Nxc3 bxc3 Bg7 Nf3 c5 Be3 Qa5 Qd2 O-O Rc1", "A linha mais teórica e testada.", undefined, "main"),
+      n("4.Cf3 Bg7 5.Db3 — Sistema russo", "Nf3 Bg7 Qb3 dxc4 Qxc4 O-O e4 Bg4 Be3 Nfd7", "As brancas pressionam d5.", undefined, "alt"),
+      n("4.Bf4 Bg7 5.e3 O-O 6.Tc1 c5", "Bf4 Bg7 e3 O-O Rc1 c5", "Sistema de desenvolvimento com Bf4.", undefined, "alt"),
+    ],
+  },
+];

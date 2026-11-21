@@ -1,9 +1,6 @@
 /// <reference types="vite/client" />
-declare module "*?raw" {
-  const content: string;
-  export default content;
-}
-declare module "*?url" {
-  const url: string;
-  export default url;
+
+declare module "*.js?raw" {
+  const src: string;
+  export default src;
 }
