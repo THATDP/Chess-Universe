@@ -1,2 +1,0 @@
-# Chess-Universe
-Chess
